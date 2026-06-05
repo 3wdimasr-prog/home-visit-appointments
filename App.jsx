@@ -1,0 +1,475 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { Plus, Search, Trash2, Edit, Download, RefreshCw, Phone, X, Wifi, WifiOff, Home } from "lucide-react";
+import * as XLSX from "xlsx";
+import { supabase } from "./supabaseClient";
+import "./style.css";
+
+const fastingOptions = ["صيام", "لا صيام"];
+const coordinators = ["SA", "وعد", "ملوك", "جود", "مؤيد", "محمد"];
+const resultOptions = ["released", "Pending"];
+const paymentMethods = ["شبكة", "صفر كاش"];
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function emptyForm() {
+  return {
+    id: "",
+    visit_date: today(),
+    neighborhood: "",
+    patient_name: "",
+    whatsapp_phone: "",
+    call_phone: "",
+    test_type: "صيام",
+    coordinator: "SA",
+    result_status: "Pending",
+    payment_method: "شبكة",
+    price: "",
+    notes: ""
+  };
+}
+
+function normalizePhone(phone) {
+  let digits = String(phone || "").replace(/[^\d]/g, "");
+  if (digits.startsWith("05")) digits = "966" + digits.slice(1);
+  if (digits.startsWith("5")) digits = "966" + digits;
+  return digits;
+}
+
+function mapDbRow(row) {
+  return {
+    id: row.id,
+    visit_date: row.visit_date || "",
+    neighborhood: row.neighborhood || "",
+    patient_name: row.patient_name || "",
+    whatsapp_phone: row.whatsapp_phone || "",
+    call_phone: row.call_phone || "",
+    test_type: row.test_type || "صيام",
+    coordinator: row.coordinator || "SA",
+    result_status: row.result_status || "Pending",
+    payment_method: row.payment_method || "شبكة",
+    price: row.price ?? "",
+    notes: row.notes || "",
+    created_at: row.created_at || "",
+    updated_at: row.updated_at || ""
+  };
+}
+
+function formatGregorianDateTime(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleString("ar-SA-u-ca-gregory", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function App() {
+  const [visits, setVisits] = useState([]);
+  const [form, setForm] = useState(emptyForm());
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [filters, setFilters] = useState({
+    q: "",
+    date: "",
+    test_type: "",
+    coordinator: "",
+    result_status: "",
+    payment_method: ""
+  });
+  const [toast, setToast] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [connection, setConnection] = useState("connecting");
+
+  useEffect(() => {
+    loadVisits();
+
+    const channel = supabase
+      .channel("home-visits-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "home_visits" },
+        () => loadVisits(false)
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") setConnection("live");
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setConnection("error");
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  async function loadVisits(showLoader = true) {
+    if (showLoader) setLoading(true);
+
+    const { data, error } = await supabase
+      .from("home_visits")
+      .select("*")
+      .order("visit_date", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      setConnection("error");
+      showToast("خطأ في تحميل البيانات: " + error.message);
+    } else {
+      setVisits((data || []).map(mapDbRow));
+      setConnection("live");
+    }
+
+    if (showLoader) setLoading(false);
+  }
+
+  const filtered = useMemo(() => {
+    return visits.filter((v) => {
+      const text = `${v.neighborhood} ${v.patient_name} ${v.whatsapp_phone} ${v.call_phone} ${v.notes} ${v.price}`.toLowerCase();
+
+      return (
+        (!filters.q || text.includes(filters.q.toLowerCase())) &&
+        (!filters.date || v.visit_date === filters.date) &&
+        (!filters.test_type || v.test_type === filters.test_type) &&
+        (!filters.coordinator || v.coordinator === filters.coordinator) &&
+        (!filters.result_status || v.result_status === filters.result_status) &&
+        (!filters.payment_method || v.payment_method === filters.payment_method)
+      );
+    });
+  }, [visits, filters]);
+
+  const stats = useMemo(() => {
+    return {
+      total: visits.length,
+      todayCount: visits.filter((v) => v.visit_date === today()).length,
+      fasting: visits.filter((v) => v.test_type === "صيام").length,
+      released: visits.filter((v) => v.result_status === "released").length,
+      pending: visits.filter((v) => v.result_status === "Pending").length
+    };
+  }, [visits]);
+
+  function showToast(message) {
+    setToast(message);
+    setTimeout(() => setToast(""), 3200);
+  }
+
+  function openAddModal() {
+    setForm(emptyForm());
+    setIsModalOpen(true);
+  }
+
+  function openEditModal(item) {
+    setForm(item);
+    setIsModalOpen(true);
+  }
+
+  async function saveVisit(e) {
+    e.preventDefault();
+
+    if (!form.visit_date || !form.neighborhood || !form.patient_name || !form.whatsapp_phone) {
+      showToast("أدخل تاريخ موعد الزيارة، اسم الحي، اسم المريض، ورقم الجوال واتس");
+      return;
+    }
+
+    const payload = {
+      visit_date: form.visit_date,
+      neighborhood: form.neighborhood,
+      patient_name: form.patient_name,
+      whatsapp_phone: normalizePhone(form.whatsapp_phone),
+      call_phone: normalizePhone(form.call_phone),
+      test_type: form.test_type || "صيام",
+      coordinator: form.coordinator || "SA",
+      result_status: form.result_status || "Pending",
+      payment_method: form.payment_method || "شبكة",
+      price: form.price === "" ? null : Number(form.price),
+      notes: form.notes || "",
+      updated_at: new Date().toISOString()
+    };
+
+    let result;
+
+    if (form.id) {
+      result = await supabase.from("home_visits").update(payload).eq("id", form.id);
+    } else {
+      result = await supabase.from("home_visits").insert(payload);
+    }
+
+    if (result.error) {
+      showToast("خطأ أثناء الحفظ: " + result.error.message);
+      return;
+    }
+
+    showToast(form.id ? "تم تعديل موعد الزيارة" : "تم إضافة موعد الزيارة");
+    setIsModalOpen(false);
+    loadVisits(false);
+  }
+
+  async function deleteVisit(id) {
+    if (!confirm("هل تريد حذف موعد الزيارة؟")) return;
+
+    const { error } = await supabase.from("home_visits").delete().eq("id", id);
+
+    if (error) {
+      showToast("خطأ أثناء الحذف: " + error.message);
+      return;
+    }
+
+    showToast("تم حذف موعد الزيارة");
+    loadVisits(false);
+  }
+
+  function exportExcel() {
+    const rows = visits.map((v) => ({
+      "تاريخ موعد الزيارة المنزلية": v.visit_date,
+      "اسم الحي": v.neighborhood,
+      "اسم المريض": v.patient_name,
+      "رقم الجوال واتس": v.whatsapp_phone,
+      "رقم الجوال اتصال": v.call_phone,
+      "نوع التحليل": v.test_type,
+      "منسق المواعيد": v.coordinator,
+      "النتائج": v.result_status,
+      "طريقة الدفع": v.payment_method,
+      "السعر": v.price,
+      "الملاحظات": v.notes,
+      "تاريخ الإضافة": v.created_at,
+      "آخر تحديث": v.updated_at
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, "Home Visits");
+    XLSX.writeFile(wb, "home-visit-appointments.xlsx");
+  }
+
+  async function importExcel(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = async (e) => {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws);
+
+      const imported = rows
+        .map((r) => ({
+          visit_date: String(r["تاريخ موعد الزيارة المنزلية"] || r["التاريخ"] || r.visit_date || today()).slice(0, 10),
+          neighborhood: String(r["اسم الحي"] || r.neighborhood || ""),
+          patient_name: String(r["اسم المريض"] || r.patient_name || ""),
+          whatsapp_phone: normalizePhone(r["رقم الجوال واتس"] || r.whatsapp_phone || ""),
+          call_phone: normalizePhone(r["رقم الجوال اتصال"] || r.call_phone || ""),
+          test_type: String(r["نوع التحليل"] || r.test_type || "صيام"),
+          coordinator: String(r["منسق المواعيد"] || r.coordinator || "SA"),
+          result_status: String(r["النتائج"] || r.result_status || "Pending"),
+          payment_method: String(r["طريقة الدفع"] || r.payment_method || "شبكة"),
+          price: r["السعر"] || r.price || null,
+          notes: String(r["الملاحظات"] || r.notes || "")
+        }))
+        .filter((r) => r.patient_name || r.whatsapp_phone);
+
+      if (!imported.length) {
+        showToast("لم يتم العثور على بيانات قابلة للاستيراد");
+        return;
+      }
+
+      const { error } = await supabase.from("home_visits").insert(imported);
+
+      if (error) {
+        showToast("خطأ أثناء الاستيراد: " + error.message);
+        return;
+      }
+
+      showToast("تم استيراد البيانات");
+      loadVisits(false);
+    };
+
+    reader.readAsArrayBuffer(file);
+  }
+
+  return (
+    <main className="app">
+      <section className="hero">
+        <div className="heroText">
+          <img src="/logo.png" alt="مختبرات الخلايا الطبية" className="logo" />
+          <div>
+            <h1>مواعيد الزيارة المنزلية</h1>
+            <p>نظام لايف لتنظيم زيارات السحب المنزلي، متابعة التحاليل، الدفع، والنتائج.</p>
+            <div className={`connection ${connection}`}>
+              {connection === "live" ? <Wifi size={15} /> : <WifiOff size={15} />}
+              {connection === "live" ? "متصل لايف" : connection === "connecting" ? "جاري الاتصال" : "مشكلة اتصال"}
+            </div>
+          </div>
+        </div>
+
+        <div className="heroActions">
+          <button className="btn btnLight" onClick={openAddModal}><Plus size={18} /> إضافة زيارة</button>
+          <button className="btn btnPrimary" onClick={exportExcel}><Download size={18} /> تصدير Excel</button>
+          <label className="btn btnGhost fileBtn">
+            استيراد Excel
+            <input type="file" accept=".xlsx,.xls" onChange={importExcel} />
+          </label>
+        </div>
+      </section>
+
+      <section className="stats">
+        <Stat label="إجمالي الزيارات" value={stats.total} />
+        <Stat label="زيارات اليوم" value={stats.todayCount} />
+        <Stat label="صيام" value={stats.fasting} />
+        <Stat label="released" value={stats.released} />
+        <Stat label="Pending" value={stats.pending} />
+      </section>
+
+      <section className="panel filters">
+        <div className="field searchField">
+          <label>بحث</label>
+          <div className="inputIcon">
+            <Search size={18} />
+            <input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="الحي، اسم المريض، الجوال، الملاحظات..." />
+          </div>
+        </div>
+
+        <div className="field">
+          <label>تاريخ موعد الزيارة المنزلية</label>
+          <input type="date" value={filters.date} onChange={(e) => setFilters({ ...filters, date: e.target.value })} />
+        </div>
+
+        <div className="field">
+          <label>نوع التحليل</label>
+          <select value={filters.test_type} onChange={(e) => setFilters({ ...filters, test_type: e.target.value })}>
+            <option value="">الكل</option>
+            {fastingOptions.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </div>
+
+        <div className="field">
+          <label>منسق المواعيد</label>
+          <select value={filters.coordinator} onChange={(e) => setFilters({ ...filters, coordinator: e.target.value })}>
+            <option value="">الكل</option>
+            {coordinators.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </div>
+
+        <div className="field">
+          <label>النتائج</label>
+          <select value={filters.result_status} onChange={(e) => setFilters({ ...filters, result_status: e.target.value })}>
+            <option value="">الكل</option>
+            {resultOptions.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </div>
+
+        <button className="btn btnGhost" onClick={() => loadVisits()}><RefreshCw size={16} /> تحديث</button>
+      </section>
+
+      <section className="panel">
+        {loading ? (
+          <div className="empty">جاري تحميل البيانات...</div>
+        ) : (
+          <div className="tableWrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>تاريخ الزيارة</th>
+                  <th>اسم الحي</th>
+                  <th>اسم المريض</th>
+                  <th>جوال واتس</th>
+                  <th>جوال اتصال</th>
+                  <th>نوع التحليل</th>
+                  <th>منسق المواعيد</th>
+                  <th>النتائج</th>
+                  <th>طريقة الدفع</th>
+                  <th>السعر</th>
+                  <th>الملاحظات</th>
+                  <th>تاريخ الإضافة</th>
+                  <th>إجراءات</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr><td colSpan="13" className="empty">لا توجد بيانات مطابقة</td></tr>
+                ) : filtered.map((item) => {
+                  const whatsapp = normalizePhone(item.whatsapp_phone);
+                  const callPhone = normalizePhone(item.call_phone);
+                  return (
+                    <tr key={item.id}>
+                      <td>{item.visit_date}</td>
+                      <td><strong>{item.neighborhood}</strong></td>
+                      <td>{item.patient_name}</td>
+                      <td>
+                        <div>{item.whatsapp_phone}</div>
+                        {whatsapp.startsWith("966") && (
+                          <a className="whatsapp" href={`https://wa.me/${whatsapp}`} target="_blank" rel="noreferrer"><Phone size={14} /> واتساب</a>
+                        )}
+                      </td>
+                      <td>
+                        <div>{item.call_phone}</div>
+                        {callPhone && <a className="call" href={`tel:${callPhone}`}><Phone size={14} /> اتصال</a>}
+                      </td>
+                      <td><span className={`badge ${item.test_type === "صيام" ? "fasting" : "notFasting"}`}>{item.test_type}</span></td>
+                      <td><span className="coordinator">{item.coordinator}</span></td>
+                      <td><span className={`badge ${item.result_status === "released" ? "released" : "pending"}`}>{item.result_status}</span></td>
+                      <td>{item.payment_method}</td>
+                      <td>{item.price ? `${item.price} ريال` : ""}</td>
+                      <td className="notes">{item.notes}</td>
+                      <td>{formatGregorianDateTime(item.created_at)}</td>
+                      <td>
+                        <div className="rowActions">
+                          <button className="miniBtn" onClick={() => openEditModal(item)}><Edit size={15} /></button>
+                          <button className="miniBtn danger" onClick={() => deleteVisit(item.id)}><Trash2 size={15} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {isModalOpen && (
+        <div className="modalOverlay" onMouseDown={(e) => e.target.className === "modalOverlay" && setIsModalOpen(false)}>
+          <div className="modal">
+            <div className="modalHead">
+              <h2>{form.id ? "تعديل زيارة" : "إضافة زيارة منزلية"}</h2>
+              <button className="closeBtn" onClick={() => setIsModalOpen(false)}><X size={20} /></button>
+            </div>
+
+            <form onSubmit={saveVisit} className="form">
+              <Field label="تاريخ موعد الزيارة المنزلية *"><input type="date" value={form.visit_date} onChange={(e) => setForm({ ...form, visit_date: e.target.value })} /></Field>
+              <Field label="اسم الحي *"><input value={form.neighborhood} onChange={(e) => setForm({ ...form, neighborhood: e.target.value })} placeholder="مثال: الحمراء" /></Field>
+              <Field label="اسم المريض *"><input value={form.patient_name} onChange={(e) => setForm({ ...form, patient_name: e.target.value })} placeholder="اسم المريض" /></Field>
+              <Field label="رقم الجوال واتس *"><input value={form.whatsapp_phone} onChange={(e) => setForm({ ...form, whatsapp_phone: e.target.value })} placeholder="05xxxxxxxx" /></Field>
+              <Field label="رقم الجوال اتصال"><input value={form.call_phone} onChange={(e) => setForm({ ...form, call_phone: e.target.value })} placeholder="05xxxxxxxx" /></Field>
+              <Field label="نوع التحليل"><select value={form.test_type} onChange={(e) => setForm({ ...form, test_type: e.target.value })}>{fastingOptions.map((s) => <option key={s}>{s}</option>)}</select></Field>
+              <Field label="منسق المواعيد"><select value={form.coordinator} onChange={(e) => setForm({ ...form, coordinator: e.target.value })}>{coordinators.map((s) => <option key={s}>{s}</option>)}</select></Field>
+              <Field label="النتائج"><select value={form.result_status} onChange={(e) => setForm({ ...form, result_status: e.target.value })}>{resultOptions.map((s) => <option key={s}>{s}</option>)}</select></Field>
+              <Field label="طريقة الدفع"><select value={form.payment_method} onChange={(e) => setForm({ ...form, payment_method: e.target.value })}>{paymentMethods.map((s) => <option key={s}>{s}</option>)}</select></Field>
+              <Field label="السعر"><input type="number" min="0" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="اكتب السعر" /></Field>
+              <Field label="الملاحظات" wide><textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows="4" placeholder="اكتب الملاحظات هنا" /></Field>
+              <div className="modalFooter">
+                <button className="btn btnPrimary" type="submit">حفظ</button>
+                <button className="btn btnGhost" type="button" onClick={() => setForm(emptyForm())}>مسح</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {toast && <div className="toast">{toast}</div>}
+    </main>
+  );
+}
+
+function Stat({ label, value }) {
+  return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function Field({ label, children, wide }) {
+  return <label className={wide ? "field wide" : "field"}><span>{label}</span>{children}</label>;
+}
+
+createRoot(document.getElementById("root")).render(<App />);
