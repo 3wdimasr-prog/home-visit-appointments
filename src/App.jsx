@@ -18,6 +18,7 @@ function emptyForm() {
   return {
     id: "",
     visit_date: today(),
+    visit_time: "",
     neighborhood: "",
     patient_name: "",
     whatsapp_phone: "",
@@ -42,6 +43,7 @@ function mapDbRow(row) {
   return {
     id: row.id,
     visit_date: row.visit_date || "",
+    visit_time: row.visit_time ? String(row.visit_time).slice(0, 5) : "",
     neighborhood: row.neighborhood || "",
     patient_name: row.patient_name || "",
     whatsapp_phone: row.whatsapp_phone || "",
@@ -111,6 +113,7 @@ function App() {
       .from("home_visits")
       .select("*")
       .order("visit_date", { ascending: false })
+      .order("visit_time", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -168,13 +171,14 @@ function App() {
   async function saveVisit(e) {
     e.preventDefault();
 
-    if (!form.visit_date || !form.neighborhood || !form.patient_name || !form.whatsapp_phone) {
-      showToast("أدخل تاريخ موعد الزيارة، اسم الحي، اسم المريض، ورقم الجوال واتس");
+    if (!form.visit_date || !form.visit_time || !form.neighborhood || !form.patient_name || !form.whatsapp_phone) {
+      showToast("أدخل تاريخ ووقت الزيارة، اسم الحي، اسم المريض، ورقم الجوال واتس");
       return;
     }
 
     const payload = {
       visit_date: form.visit_date,
+      visit_time: form.visit_time,
       neighborhood: form.neighborhood,
       patient_name: form.patient_name,
       whatsapp_phone: normalizePhone(form.whatsapp_phone),
@@ -223,6 +227,7 @@ function App() {
   function exportExcel() {
     const rows = visits.map((v) => ({
       "تاريخ موعد الزيارة المنزلية": v.visit_date,
+      "وقت الزيارة المنزلية": v.visit_time,
       "اسم الحي": v.neighborhood,
       "اسم المريض": v.patient_name,
       "رقم الجوال واتس": v.whatsapp_phone,
@@ -258,6 +263,7 @@ function App() {
       const imported = rows
         .map((r) => ({
           visit_date: String(r["تاريخ موعد الزيارة المنزلية"] || r["التاريخ"] || r.visit_date || today()).slice(0, 10),
+          visit_time: String(r["وقت الزيارة المنزلية"] || r["الوقت"] || r.visit_time || "").slice(0, 5),
           neighborhood: String(r["اسم الحي"] || r.neighborhood || ""),
           patient_name: String(r["اسم المريض"] || r.patient_name || ""),
           whatsapp_phone: normalizePhone(r["رقم الجوال واتس"] || r.whatsapp_phone || ""),
@@ -373,6 +379,7 @@ function App() {
               <thead>
                 <tr>
                   <th>تاريخ الزيارة</th>
+                  <th>وقت الزيارة</th>
                   <th>اسم الحي</th>
                   <th>اسم المريض</th>
                   <th>جوال واتس</th>
@@ -389,13 +396,14 @@ function App() {
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan="13" className="empty">لا توجد بيانات مطابقة</td></tr>
+                  <tr><td colSpan="14" className="empty">لا توجد بيانات مطابقة</td></tr>
                 ) : filtered.map((item) => {
                   const whatsapp = normalizePhone(item.whatsapp_phone);
                   const callPhone = normalizePhone(item.call_phone);
                   return (
                     <tr key={item.id}>
                       <td>{item.visit_date}</td>
+                      <td>{item.visit_time}</td>
                       <td><strong>{item.neighborhood}</strong></td>
                       <td>{item.patient_name}</td>
                       <td>
@@ -440,6 +448,7 @@ function App() {
 
             <form onSubmit={saveVisit} className="form">
               <Field label="تاريخ موعد الزيارة المنزلية *"><input type="date" value={form.visit_date} onChange={(e) => setForm({ ...form, visit_date: e.target.value })} /></Field>
+              <Field label="وقت الزيارة المنزلية *"><input type="time" value={form.visit_time} onChange={(e) => setForm({ ...form, visit_time: e.target.value })} /></Field>
               <Field label="اسم الحي *"><input value={form.neighborhood} onChange={(e) => setForm({ ...form, neighborhood: e.target.value })} placeholder="مثال: الحمراء" /></Field>
               <Field label="اسم المريض *"><input value={form.patient_name} onChange={(e) => setForm({ ...form, patient_name: e.target.value })} placeholder="اسم المريض" /></Field>
               <Field label="رقم الجوال واتس *"><input value={form.whatsapp_phone} onChange={(e) => setForm({ ...form, whatsapp_phone: e.target.value })} placeholder="05xxxxxxxx" /></Field>
