@@ -5,7 +5,13 @@ import * as XLSX from "xlsx";
 import { supabase } from "./supabaseClient";
 import "./style.css";
 
-const fastingOptions = ["صيام", "لا صيام"];
+const fastingOptions = [
+  "صيام",
+  "لا صيام",
+  "صيام مع تحليل بول",
+  "لا صيام مع تحليل بول"
+];
+
 const coordinators = ["SA", "وعد", "ملوك", "جود", "مؤيد", "محمد"];
 const resultOptions = ["released", "Pending"];
 const paymentMethods = ["شبكة", "صفر كاش"];
@@ -39,11 +45,21 @@ function normalizePhone(phone) {
   return digits;
 }
 
+function normalizeTime(value) {
+  if (!value) return "";
+  return String(value).slice(0, 5);
+}
+
+function normalizePrice(value) {
+  if (value === null || value === undefined || value === "") return "";
+  return String(value);
+}
+
 function mapDbRow(row) {
   return {
     id: row.id,
     visit_date: row.visit_date || "",
-    visit_time: row.visit_time ? String(row.visit_time).slice(0, 5) : "",
+    visit_time: normalizeTime(row.visit_time),
     neighborhood: row.neighborhood || "",
     patient_name: row.patient_name || "",
     whatsapp_phone: row.whatsapp_phone || "",
@@ -52,7 +68,7 @@ function mapDbRow(row) {
     coordinator: row.coordinator || "SA",
     result_status: row.result_status || "Pending",
     payment_method: row.payment_method || "شبكة",
-    price: row.price ?? "",
+    price: normalizePrice(row.price),
     notes: row.notes || "",
     created_at: row.created_at || "",
     updated_at: row.updated_at || ""
@@ -68,6 +84,13 @@ function formatGregorianDateTime(value) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function formatPrice(value) {
+  if (value === null || value === undefined || value === "") return "";
+  const numberValue = Number(value);
+  if (Number.isNaN(numberValue)) return "";
+  return `${numberValue.toFixed(2)} ريال`;
 }
 
 function App() {
@@ -147,7 +170,7 @@ function App() {
     return {
       total: visits.length,
       todayCount: visits.filter((v) => v.visit_date === today()).length,
-      fasting: visits.filter((v) => v.test_type === "صيام").length,
+      fasting: visits.filter((v) => v.test_type === "صيام" || v.test_type === "صيام مع تحليل بول").length,
       released: visits.filter((v) => v.result_status === "released").length,
       pending: visits.filter((v) => v.result_status === "Pending").length
     };
@@ -176,6 +199,13 @@ function App() {
       return;
     }
 
+    const priceValue = form.price === "" ? null : Number(form.price);
+
+    if (form.price !== "" && (Number.isNaN(priceValue) || priceValue < 0)) {
+      showToast("أدخل السعر بشكل صحيح، مثال: 13.55");
+      return;
+    }
+
     const payload = {
       visit_date: form.visit_date,
       visit_time: form.visit_time,
@@ -187,7 +217,7 @@ function App() {
       coordinator: form.coordinator || "SA",
       result_status: form.result_status || "Pending",
       payment_method: form.payment_method || "شبكة",
-      price: form.price === "" ? null : Number(form.price),
+      price: priceValue,
       notes: form.notes || "",
       updated_at: new Date().toISOString()
     };
@@ -261,20 +291,24 @@ function App() {
       const rows = XLSX.utils.sheet_to_json(ws);
 
       const imported = rows
-        .map((r) => ({
-          visit_date: String(r["تاريخ موعد الزيارة المنزلية"] || r["التاريخ"] || r.visit_date || today()).slice(0, 10),
-          visit_time: String(r["وقت الزيارة المنزلية"] || r["الوقت"] || r.visit_time || "").slice(0, 5),
-          neighborhood: String(r["اسم الحي"] || r.neighborhood || ""),
-          patient_name: String(r["اسم المريض"] || r.patient_name || ""),
-          whatsapp_phone: normalizePhone(r["رقم الجوال واتس"] || r.whatsapp_phone || ""),
-          call_phone: normalizePhone(r["رقم الجوال اتصال"] || r.call_phone || ""),
-          test_type: String(r["نوع التحليل"] || r.test_type || "صيام"),
-          coordinator: String(r["منسق المواعيد"] || r.coordinator || "SA"),
-          result_status: String(r["النتائج"] || r.result_status || "Pending"),
-          payment_method: String(r["طريقة الدفع"] || r.payment_method || "شبكة"),
-          price: r["السعر"] || r.price || null,
-          notes: String(r["الملاحظات"] || r.notes || "")
-        }))
+        .map((r) => {
+          const rawPrice = r["السعر"] || r.price || null;
+
+          return {
+            visit_date: String(r["تاريخ موعد الزيارة المنزلية"] || r["التاريخ"] || r.visit_date || today()).slice(0, 10),
+            visit_time: String(r["وقت الزيارة المنزلية"] || r["الوقت"] || r.visit_time || "").slice(0, 5),
+            neighborhood: String(r["اسم الحي"] || r.neighborhood || ""),
+            patient_name: String(r["اسم المريض"] || r.patient_name || ""),
+            whatsapp_phone: normalizePhone(r["رقم الجوال واتس"] || r.whatsapp_phone || ""),
+            call_phone: normalizePhone(r["رقم الجوال اتصال"] || r.call_phone || ""),
+            test_type: String(r["نوع التحليل"] || r.test_type || "صيام"),
+            coordinator: String(r["منسق المواعيد"] || r.coordinator || "SA"),
+            result_status: String(r["النتائج"] || r.result_status || "Pending"),
+            payment_method: String(r["طريقة الدفع"] || r.payment_method || "شبكة"),
+            price: rawPrice === "" ? null : rawPrice,
+            notes: String(r["الملاحظات"] || r.notes || "")
+          };
+        })
         .filter((r) => r.patient_name || r.whatsapp_phone);
 
       if (!imported.length) {
@@ -416,11 +450,11 @@ function App() {
                         <div>{item.call_phone}</div>
                         {callPhone && <a className="call" href={`tel:${callPhone}`}><Phone size={14} /> اتصال</a>}
                       </td>
-                      <td><span className={`badge ${item.test_type === "صيام" ? "fasting" : "notFasting"}`}>{item.test_type}</span></td>
+                      <td><span className={`badge ${item.test_type.includes("صيام") ? "fasting" : "notFasting"}`}>{item.test_type}</span></td>
                       <td><span className="coordinator">{item.coordinator}</span></td>
                       <td><span className={`badge ${item.result_status === "released" ? "released" : "pending"}`}>{item.result_status}</span></td>
                       <td>{item.payment_method}</td>
-                      <td>{item.price ? `${item.price} ريال` : ""}</td>
+                      <td>{formatPrice(item.price)}</td>
                       <td className="notes">{item.notes}</td>
                       <td>{formatGregorianDateTime(item.created_at)}</td>
                       <td>
@@ -457,7 +491,17 @@ function App() {
               <Field label="منسق المواعيد"><select value={form.coordinator} onChange={(e) => setForm({ ...form, coordinator: e.target.value })}>{coordinators.map((s) => <option key={s}>{s}</option>)}</select></Field>
               <Field label="النتائج"><select value={form.result_status} onChange={(e) => setForm({ ...form, result_status: e.target.value })}>{resultOptions.map((s) => <option key={s}>{s}</option>)}</select></Field>
               <Field label="طريقة الدفع"><select value={form.payment_method} onChange={(e) => setForm({ ...form, payment_method: e.target.value })}>{paymentMethods.map((s) => <option key={s}>{s}</option>)}</select></Field>
-              <Field label="السعر"><input type="number" min="0" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="اكتب السعر" /></Field>
+              <Field label="السعر">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={form.price}
+                  onChange={(e) => setForm({ ...form, price: e.target.value })}
+                  placeholder="مثال: 13.55"
+                />
+              </Field>
               <Field label="الملاحظات" wide><textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows="4" placeholder="اكتب الملاحظات هنا" /></Field>
               <div className="modalFooter">
                 <button className="btn btnPrimary" type="submit">حفظ</button>
