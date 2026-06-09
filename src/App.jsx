@@ -5,16 +5,12 @@ import * as XLSX from "xlsx";
 import { supabase } from "./supabaseClient";
 import "./style.css";
 
-const fastingOptions = [
-  "صيام",
-  "لا صيام",
-  "صيام مع تحليل بول",
-  "لا صيام مع تحليل بول"
-];
-
+const sourceOptions = ["عميل", "Mc Lab", "اخرى"];
+const fastingOptions = ["صيام", "لا صيام", "صيام مع تحليل بول", "لا صيام مع تحليل بول"];
 const coordinators = ["SA", "وعد", "ملوك", "جود", "مؤيد", "محمد"];
 const resultOptions = ["released", "Pending"];
-const paymentMethods = ["شبكة", "صفر كاش"];
+const paymentMethods = ["شبكة", "كاش", "تحويل بنكي", "اخرى"];
+const appointmentStatuses = ["تم عمل الموعد", "ملغي"];
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -23,6 +19,8 @@ function today() {
 function emptyForm() {
   return {
     id: "",
+    source_type: "عميل",
+    source_note: "",
     visit_date: today(),
     visit_time: "",
     neighborhood: "",
@@ -33,7 +31,10 @@ function emptyForm() {
     coordinator: "SA",
     result_status: "Pending",
     payment_method: "شبكة",
+    payment_note: "",
     price: "",
+    appointment_status: "تم عمل الموعد",
+    cancel_reason: "",
     notes: ""
   };
 }
@@ -58,6 +59,8 @@ function normalizePrice(value) {
 function mapDbRow(row) {
   return {
     id: row.id,
+    source_type: row.source_type || "عميل",
+    source_note: row.source_note || "",
     visit_date: row.visit_date || "",
     visit_time: normalizeTime(row.visit_time),
     neighborhood: row.neighborhood || "",
@@ -68,7 +71,10 @@ function mapDbRow(row) {
     coordinator: row.coordinator || "SA",
     result_status: row.result_status || "Pending",
     payment_method: row.payment_method || "شبكة",
+    payment_note: row.payment_note || "",
     price: normalizePrice(row.price),
+    appointment_status: row.appointment_status || "تم عمل الموعد",
+    cancel_reason: row.cancel_reason || "",
     notes: row.notes || "",
     created_at: row.created_at || "",
     updated_at: row.updated_at || ""
@@ -100,10 +106,12 @@ function App() {
   const [filters, setFilters] = useState({
     q: "",
     date: "",
+    source_type: "",
     test_type: "",
     coordinator: "",
     result_status: "",
-    payment_method: ""
+    payment_method: "",
+    appointment_status: ""
   });
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
@@ -153,15 +161,17 @@ function App() {
 
   const filtered = useMemo(() => {
     return visits.filter((v) => {
-      const text = `${v.neighborhood} ${v.patient_name} ${v.whatsapp_phone} ${v.call_phone} ${v.notes} ${v.price}`.toLowerCase();
+      const text = `${v.source_type} ${v.source_note} ${v.neighborhood} ${v.patient_name} ${v.whatsapp_phone} ${v.call_phone} ${v.notes} ${v.payment_note} ${v.cancel_reason} ${v.price}`.toLowerCase();
 
       return (
         (!filters.q || text.includes(filters.q.toLowerCase())) &&
         (!filters.date || v.visit_date === filters.date) &&
+        (!filters.source_type || v.source_type === filters.source_type) &&
         (!filters.test_type || v.test_type === filters.test_type) &&
         (!filters.coordinator || v.coordinator === filters.coordinator) &&
         (!filters.result_status || v.result_status === filters.result_status) &&
-        (!filters.payment_method || v.payment_method === filters.payment_method)
+        (!filters.payment_method || v.payment_method === filters.payment_method) &&
+        (!filters.appointment_status || v.appointment_status === filters.appointment_status)
       );
     });
   }, [visits, filters]);
@@ -170,8 +180,8 @@ function App() {
     return {
       total: visits.length,
       todayCount: visits.filter((v) => v.visit_date === today()).length,
-      fasting: visits.filter((v) => v.test_type === "صيام" || v.test_type === "صيام مع تحليل بول").length,
-      released: visits.filter((v) => v.result_status === "released").length,
+      done: visits.filter((v) => v.appointment_status === "تم عمل الموعد").length,
+      canceled: visits.filter((v) => v.appointment_status === "ملغي").length,
       pending: visits.filter((v) => v.result_status === "Pending").length
     };
   }, [visits]);
@@ -199,6 +209,21 @@ function App() {
       return;
     }
 
+    if (form.source_type === "اخرى" && !form.source_note.trim()) {
+      showToast("اكتب ملاحظة المصدر عند اختيار اخرى");
+      return;
+    }
+
+    if (form.payment_method === "اخرى" && !form.payment_note.trim()) {
+      showToast("اكتب ملاحظة طريقة الدفع عند اختيار اخرى");
+      return;
+    }
+
+    if (form.appointment_status === "ملغي" && !form.cancel_reason.trim()) {
+      showToast("اكتب سبب إلغاء الموعد");
+      return;
+    }
+
     const priceValue = form.price === "" ? null : Number(form.price);
 
     if (form.price !== "" && (Number.isNaN(priceValue) || priceValue < 0)) {
@@ -207,6 +232,8 @@ function App() {
     }
 
     const payload = {
+      source_type: form.source_type || "عميل",
+      source_note: form.source_type === "اخرى" ? form.source_note : "",
       visit_date: form.visit_date,
       visit_time: form.visit_time,
       neighborhood: form.neighborhood,
@@ -217,7 +244,10 @@ function App() {
       coordinator: form.coordinator || "SA",
       result_status: form.result_status || "Pending",
       payment_method: form.payment_method || "شبكة",
+      payment_note: form.payment_method === "اخرى" ? form.payment_note : "",
       price: priceValue,
+      appointment_status: form.appointment_status || "تم عمل الموعد",
+      cancel_reason: form.appointment_status === "ملغي" ? form.cancel_reason : "",
       notes: form.notes || "",
       updated_at: new Date().toISOString()
     };
@@ -256,6 +286,8 @@ function App() {
 
   function exportExcel() {
     const rows = visits.map((v) => ({
+      "المصدر": v.source_type,
+      "ملاحظة المصدر": v.source_note,
       "تاريخ موعد الزيارة المنزلية": v.visit_date,
       "وقت الزيارة المنزلية": v.visit_time,
       "اسم الحي": v.neighborhood,
@@ -266,7 +298,10 @@ function App() {
       "منسق المواعيد": v.coordinator,
       "النتائج": v.result_status,
       "طريقة الدفع": v.payment_method,
+      "ملاحظة الدفع": v.payment_note,
       "السعر": v.price,
+      "حالة الموعد": v.appointment_status,
+      "سبب الإلغاء": v.cancel_reason,
       "الملاحظات": v.notes,
       "تاريخ الإضافة": v.created_at,
       "آخر تحديث": v.updated_at
@@ -295,6 +330,8 @@ function App() {
           const rawPrice = r["السعر"] || r.price || null;
 
           return {
+            source_type: String(r["المصدر"] || r.source_type || "عميل"),
+            source_note: String(r["ملاحظة المصدر"] || r.source_note || ""),
             visit_date: String(r["تاريخ موعد الزيارة المنزلية"] || r["التاريخ"] || r.visit_date || today()).slice(0, 10),
             visit_time: String(r["وقت الزيارة المنزلية"] || r["الوقت"] || r.visit_time || "").slice(0, 5),
             neighborhood: String(r["اسم الحي"] || r.neighborhood || ""),
@@ -305,7 +342,10 @@ function App() {
             coordinator: String(r["منسق المواعيد"] || r.coordinator || "SA"),
             result_status: String(r["النتائج"] || r.result_status || "Pending"),
             payment_method: String(r["طريقة الدفع"] || r.payment_method || "شبكة"),
+            payment_note: String(r["ملاحظة الدفع"] || r.payment_note || ""),
             price: rawPrice === "" ? null : rawPrice,
+            appointment_status: String(r["حالة الموعد"] || r.appointment_status || "تم عمل الموعد"),
+            cancel_reason: String(r["سبب الإلغاء"] || r.cancel_reason || ""),
             notes: String(r["الملاحظات"] || r.notes || "")
           };
         })
@@ -358,8 +398,8 @@ function App() {
       <section className="stats">
         <Stat label="إجمالي الزيارات" value={stats.total} />
         <Stat label="زيارات اليوم" value={stats.todayCount} />
-        <Stat label="صيام" value={stats.fasting} />
-        <Stat label="released" value={stats.released} />
+        <Stat label="تم عمل الموعد" value={stats.done} />
+        <Stat label="ملغي" value={stats.canceled} />
         <Stat label="Pending" value={stats.pending} />
       </section>
 
@@ -368,13 +408,21 @@ function App() {
           <label>بحث</label>
           <div className="inputIcon">
             <Search size={18} />
-            <input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="الحي، اسم المريض، الجوال، الملاحظات..." />
+            <input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="المصدر، الحي، اسم المريض، الجوال، الملاحظات..." />
           </div>
         </div>
 
         <div className="field">
-          <label>تاريخ موعد الزيارة المنزلية</label>
+          <label>تاريخ الزيارة</label>
           <input type="date" value={filters.date} onChange={(e) => setFilters({ ...filters, date: e.target.value })} />
+        </div>
+
+        <div className="field">
+          <label>المصدر</label>
+          <select value={filters.source_type} onChange={(e) => setFilters({ ...filters, source_type: e.target.value })}>
+            <option value="">الكل</option>
+            {sourceOptions.map((s) => <option key={s}>{s}</option>)}
+          </select>
         </div>
 
         <div className="field">
@@ -386,18 +434,10 @@ function App() {
         </div>
 
         <div className="field">
-          <label>منسق المواعيد</label>
-          <select value={filters.coordinator} onChange={(e) => setFilters({ ...filters, coordinator: e.target.value })}>
+          <label>حالة الموعد</label>
+          <select value={filters.appointment_status} onChange={(e) => setFilters({ ...filters, appointment_status: e.target.value })}>
             <option value="">الكل</option>
-            {coordinators.map((s) => <option key={s}>{s}</option>)}
-          </select>
-        </div>
-
-        <div className="field">
-          <label>النتائج</label>
-          <select value={filters.result_status} onChange={(e) => setFilters({ ...filters, result_status: e.target.value })}>
-            <option value="">الكل</option>
-            {resultOptions.map((s) => <option key={s}>{s}</option>)}
+            {appointmentStatuses.map((s) => <option key={s}>{s}</option>)}
           </select>
         </div>
 
@@ -412,6 +452,8 @@ function App() {
             <table>
               <thead>
                 <tr>
+                  <th>المصدر</th>
+                  <th>ملاحظة المصدر</th>
                   <th>تاريخ الزيارة</th>
                   <th>وقت الزيارة</th>
                   <th>اسم الحي</th>
@@ -422,7 +464,10 @@ function App() {
                   <th>منسق المواعيد</th>
                   <th>النتائج</th>
                   <th>طريقة الدفع</th>
+                  <th>ملاحظة الدفع</th>
                   <th>السعر</th>
+                  <th>حالة الموعد</th>
+                  <th>سبب الإلغاء</th>
                   <th>الملاحظات</th>
                   <th>تاريخ الإضافة</th>
                   <th>إجراءات</th>
@@ -430,12 +475,14 @@ function App() {
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan="14" className="empty">لا توجد بيانات مطابقة</td></tr>
+                  <tr><td colSpan="19" className="empty">لا توجد بيانات مطابقة</td></tr>
                 ) : filtered.map((item) => {
                   const whatsapp = normalizePhone(item.whatsapp_phone);
                   const callPhone = normalizePhone(item.call_phone);
                   return (
                     <tr key={item.id}>
+                      <td><span className="sourceBadge">{item.source_type}</span></td>
+                      <td className="notes">{item.source_note}</td>
                       <td>{item.visit_date}</td>
                       <td>{item.visit_time}</td>
                       <td><strong>{item.neighborhood}</strong></td>
@@ -454,7 +501,10 @@ function App() {
                       <td><span className="coordinator">{item.coordinator}</span></td>
                       <td><span className={`badge ${item.result_status === "released" ? "released" : "pending"}`}>{item.result_status}</span></td>
                       <td>{item.payment_method}</td>
+                      <td className="notes">{item.payment_note}</td>
                       <td>{formatPrice(item.price)}</td>
+                      <td><span className={`badge ${item.appointment_status === "ملغي" ? "canceled" : "done"}`}>{item.appointment_status}</span></td>
+                      <td className="notes">{item.cancel_reason}</td>
                       <td className="notes">{item.notes}</td>
                       <td>{formatGregorianDateTime(item.created_at)}</td>
                       <td>
@@ -481,6 +531,25 @@ function App() {
             </div>
 
             <form onSubmit={saveVisit} className="form">
+              <Field label="المصدر">
+                <select
+                  value={form.source_type}
+                  onChange={(e) => setForm({ ...form, source_type: e.target.value, source_note: e.target.value === "اخرى" ? form.source_note : "" })}
+                >
+                  {sourceOptions.map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </Field>
+
+              {form.source_type === "اخرى" && (
+                <Field label="ملاحظة المصدر *">
+                  <input
+                    value={form.source_note}
+                    onChange={(e) => setForm({ ...form, source_note: e.target.value })}
+                    placeholder="اكتب المصدر"
+                  />
+                </Field>
+              )}
+
               <Field label="تاريخ موعد الزيارة المنزلية *"><input type="date" value={form.visit_date} onChange={(e) => setForm({ ...form, visit_date: e.target.value })} /></Field>
               <Field label="وقت الزيارة المنزلية *"><input type="time" value={form.visit_time} onChange={(e) => setForm({ ...form, visit_time: e.target.value })} /></Field>
               <Field label="اسم الحي *"><input value={form.neighborhood} onChange={(e) => setForm({ ...form, neighborhood: e.target.value })} placeholder="مثال: الحمراء" /></Field>
@@ -490,7 +559,26 @@ function App() {
               <Field label="نوع التحليل"><select value={form.test_type} onChange={(e) => setForm({ ...form, test_type: e.target.value })}>{fastingOptions.map((s) => <option key={s}>{s}</option>)}</select></Field>
               <Field label="منسق المواعيد"><select value={form.coordinator} onChange={(e) => setForm({ ...form, coordinator: e.target.value })}>{coordinators.map((s) => <option key={s}>{s}</option>)}</select></Field>
               <Field label="النتائج"><select value={form.result_status} onChange={(e) => setForm({ ...form, result_status: e.target.value })}>{resultOptions.map((s) => <option key={s}>{s}</option>)}</select></Field>
-              <Field label="طريقة الدفع"><select value={form.payment_method} onChange={(e) => setForm({ ...form, payment_method: e.target.value })}>{paymentMethods.map((s) => <option key={s}>{s}</option>)}</select></Field>
+
+              <Field label="طريقة الدفع">
+                <select
+                  value={form.payment_method}
+                  onChange={(e) => setForm({ ...form, payment_method: e.target.value, payment_note: e.target.value === "اخرى" ? form.payment_note : "" })}
+                >
+                  {paymentMethods.map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </Field>
+
+              {form.payment_method === "اخرى" && (
+                <Field label="ملاحظة طريقة الدفع *">
+                  <input
+                    value={form.payment_note}
+                    onChange={(e) => setForm({ ...form, payment_note: e.target.value })}
+                    placeholder="اكتب طريقة الدفع"
+                  />
+                </Field>
+              )}
+
               <Field label="السعر">
                 <input
                   type="number"
@@ -502,6 +590,27 @@ function App() {
                   placeholder="مثال: 13.55"
                 />
               </Field>
+
+              <Field label="حالة الموعد">
+                <select
+                  value={form.appointment_status}
+                  onChange={(e) => setForm({ ...form, appointment_status: e.target.value, cancel_reason: e.target.value === "ملغي" ? form.cancel_reason : "" })}
+                >
+                  {appointmentStatuses.map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </Field>
+
+              {form.appointment_status === "ملغي" && (
+                <Field label="سبب إلغاء الموعد *" wide>
+                  <textarea
+                    value={form.cancel_reason}
+                    onChange={(e) => setForm({ ...form, cancel_reason: e.target.value })}
+                    rows="3"
+                    placeholder="اكتب سبب إلغاء الموعد"
+                  />
+                </Field>
+              )}
+
               <Field label="الملاحظات" wide><textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows="4" placeholder="اكتب الملاحظات هنا" /></Field>
               <div className="modalFooter">
                 <button className="btn btnPrimary" type="submit">حفظ</button>
