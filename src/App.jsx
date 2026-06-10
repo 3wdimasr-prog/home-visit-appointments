@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import { supabase } from "./supabaseClient";
 import "./style.css";
 
-const sourceOptions = ["عميل", "MC LAB", "اخرى"];
+const sourceOptions = ["MC LAB", "اخرى"];
 const fastingOptions = ["صيام", "لا صيام", "صيام مع تحليل بول", "لا صيام مع تحليل بول"];
 const coordinators = ["SA", "وعد", "ملوك", "جود", "مؤيد", "محمد"];
 const resultOptions = ["released", "Pending"];
@@ -19,7 +19,7 @@ function today() {
 function emptyForm() {
   return {
     id: "",
-    source_type: "عميل",
+    source_type: "MC LAB",
     source_note: "",
     visit_date: today(),
     visit_time: "",
@@ -59,7 +59,7 @@ function normalizePrice(value) {
 function mapDbRow(row) {
   return {
     id: row.id,
-    source_type: row.source_type || "عميل",
+    source_type: row.source_type || "MC LAB",
     source_note: row.source_note || "",
     visit_date: row.visit_date || "",
     visit_time: normalizeTime(row.visit_time),
@@ -232,7 +232,7 @@ function App() {
     }
 
     const payload = {
-      source_type: form.source_type || "عميل",
+      source_type: form.source_type || "MC LAB",
       source_note: form.source_type === "اخرى" ? form.source_note : "",
       visit_date: form.visit_date,
       visit_time: form.visit_time,
@@ -330,7 +330,7 @@ function App() {
           const rawPrice = r["السعر"] || r.price || null;
 
           return {
-            source_type: String(r["عميل"] || r["المصدر"] || r.source_type || "عميل"),
+            source_type: String(r["عميل"] || r["المصدر"] || r.source_type || "MC LAB"),
             source_note: String(r["ملاحظة عميل"] || r["ملاحظة المصدر"] || r.source_note || ""),
             visit_date: String(r["تاريخ موعد الزيارة المنزلية"] || r["التاريخ"] || r.visit_date || today()).slice(0, 10),
             visit_time: String(r["وقت الزيارة المنزلية"] || r["الوقت"] || r.visit_time || "").slice(0, 5),
