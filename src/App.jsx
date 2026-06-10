@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import { supabase } from "./supabaseClient";
 import "./style.css";
 
-const sourceOptions = ["عميل", "Mc Lab", "اخرى"];
+const sourceOptions = ["عميل", "MC LAB", "اخرى"];
 const fastingOptions = ["صيام", "لا صيام", "صيام مع تحليل بول", "لا صيام مع تحليل بول"];
 const coordinators = ["SA", "وعد", "ملوك", "جود", "مؤيد", "محمد"];
 const resultOptions = ["released", "Pending"];
@@ -210,7 +210,7 @@ function App() {
     }
 
     if (form.source_type === "اخرى" && !form.source_note.trim()) {
-      showToast("اكتب ملاحظة المصدر عند اختيار اخرى");
+      showToast("اكتب ملاحظة عميل عند اختيار اخرى");
       return;
     }
 
@@ -286,8 +286,8 @@ function App() {
 
   function exportExcel() {
     const rows = visits.map((v) => ({
-      "المصدر": v.source_type,
-      "ملاحظة المصدر": v.source_note,
+      "عميل": v.source_type,
+      "ملاحظة عميل": v.source_note,
       "تاريخ موعد الزيارة المنزلية": v.visit_date,
       "وقت الزيارة المنزلية": v.visit_time,
       "اسم الحي": v.neighborhood,
@@ -330,8 +330,8 @@ function App() {
           const rawPrice = r["السعر"] || r.price || null;
 
           return {
-            source_type: String(r["المصدر"] || r.source_type || "عميل"),
-            source_note: String(r["ملاحظة المصدر"] || r.source_note || ""),
+            source_type: String(r["عميل"] || r["المصدر"] || r.source_type || "عميل"),
+            source_note: String(r["ملاحظة عميل"] || r["ملاحظة المصدر"] || r.source_note || ""),
             visit_date: String(r["تاريخ موعد الزيارة المنزلية"] || r["التاريخ"] || r.visit_date || today()).slice(0, 10),
             visit_time: String(r["وقت الزيارة المنزلية"] || r["الوقت"] || r.visit_time || "").slice(0, 5),
             neighborhood: String(r["اسم الحي"] || r.neighborhood || ""),
@@ -408,7 +408,7 @@ function App() {
           <label>بحث</label>
           <div className="inputIcon">
             <Search size={18} />
-            <input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="المصدر، الحي، اسم المريض، الجوال، الملاحظات..." />
+            <input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="عميل، الحي، اسم المريض، الجوال، الملاحظات..." />
           </div>
         </div>
 
@@ -418,7 +418,7 @@ function App() {
         </div>
 
         <div className="field">
-          <label>المصدر</label>
+          <label>عميل</label>
           <select value={filters.source_type} onChange={(e) => setFilters({ ...filters, source_type: e.target.value })}>
             <option value="">الكل</option>
             {sourceOptions.map((s) => <option key={s}>{s}</option>)}
@@ -452,8 +452,8 @@ function App() {
             <table>
               <thead>
                 <tr>
-                  <th>المصدر</th>
-                  <th>ملاحظة المصدر</th>
+                  <th>عميل</th>
+                  <th>ملاحظة عميل</th>
                   <th>تاريخ الزيارة</th>
                   <th>وقت الزيارة</th>
                   <th>اسم الحي</th>
@@ -531,7 +531,7 @@ function App() {
             </div>
 
             <form onSubmit={saveVisit} className="form">
-              <Field label="المصدر">
+              <Field label="عميل">
                 <select
                   value={form.source_type}
                   onChange={(e) => setForm({ ...form, source_type: e.target.value, source_note: e.target.value === "اخرى" ? form.source_note : "" })}
@@ -541,11 +541,11 @@ function App() {
               </Field>
 
               {form.source_type === "اخرى" && (
-                <Field label="ملاحظة المصدر *">
+                <Field label="ملاحظة عميل *">
                   <input
                     value={form.source_note}
                     onChange={(e) => setForm({ ...form, source_note: e.target.value })}
-                    placeholder="اكتب المصدر"
+                    placeholder="اكتب التفاصيل"
                   />
                 </Field>
               )}
