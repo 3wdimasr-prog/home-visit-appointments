@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Plus, Search, Trash2, Edit, Download, RefreshCw, Phone, X, Wifi, WifiOff, Home } from "lucide-react";
+import { Plus, Search, Trash2, Edit, Download, RefreshCw, Phone, X, Wifi, WifiOff, Home, Lock, LogOut } from "lucide-react";
 import * as XLSX from "xlsx";
 import { supabase } from "./supabaseClient";
 import "./style.css";
@@ -99,7 +99,18 @@ function formatPrice(value) {
   return `${numberValue.toFixed(2)} ريال`;
 }
 
+function emptyLoginForm() {
+  return {
+    email: "",
+    password: ""
+  };
+}
+
 function App() {
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginForm, setLoginForm] = useState(emptyLoginForm());
+  const [loginError, setLoginError] = useState("");
   const [visits, setVisits] = useState([]);
   const [form, setForm] = useState(emptyForm());
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -118,9 +129,49 @@ function App() {
   const [connection, setConnection] = useState("connecting");
 
   useEffect(() => {
-    loadVisits();
+    let activeChannel = null;
 
-    const channel = supabase
+    async function initAuth() {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session || null);
+      setAuthLoading(false);
+
+      if (data.session) {
+        loadVisits();
+        activeChannel = subscribeToVisits();
+      }
+    }
+
+    initAuth();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession || null);
+
+      if (newSession) {
+        loadVisits();
+        if (!activeChannel) {
+          activeChannel = subscribeToVisits();
+        }
+      } else {
+        setVisits([]);
+        setConnection("connecting");
+        if (activeChannel) {
+          supabase.removeChannel(activeChannel);
+          activeChannel = null;
+        }
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+      if (activeChannel) {
+        supabase.removeChannel(activeChannel);
+      }
+    };
+  }, []);
+
+  function subscribeToVisits() {
+    return supabase
       .channel("home-visits-live")
       .on(
         "postgres_changes",
@@ -131,11 +182,37 @@ function App() {
         if (status === "SUBSCRIBED") setConnection("live");
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setConnection("error");
       });
+  }
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+  async function login(e) {
+    e.preventDefault();
+    setLoginError("");
+
+    if (!loginForm.email || !loginForm.password) {
+      setLoginError("اكتب اليوزر والباسورد");
+      return;
+    }
+
+    setAuthLoading(true);
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: loginForm.email,
+      password: loginForm.password
+    });
+
+    setAuthLoading(false);
+
+    if (error) {
+      setLoginError("بيانات الدخول غير صحيحة");
+      return;
+    }
+
+    setLoginForm(emptyLoginForm());
+  }
+
+  async function logout() {
+    await supabase.auth.signOut();
+  }
 
   async function loadVisits(showLoader = true) {
     if (showLoader) setLoading(true);
@@ -370,6 +447,58 @@ function App() {
     reader.readAsArrayBuffer(file);
   }
 
+  if (authLoading) {
+    return (
+      <main className="loginPage">
+        <div className="loginCard">
+          <img src="/logo.png" alt="مختبرات الخلايا الطبية" className="loginLogo" />
+          <h1>جاري التحقق...</h1>
+        </div>
+      </main>
+    );
+  }
+
+  if (!session) {
+    return (
+      <main className="loginPage">
+        <form className="loginCard" onSubmit={login}>
+          <img src="/logo.png" alt="مختبرات الخلايا الطبية" className="loginLogo" />
+          <div className="loginIcon"><Lock size={24} /></div>
+          <h1>تسجيل الدخول</h1>
+          <p>مواعيد الزيارة المنزلية</p>
+
+          <label className="loginField">
+            <span>اليوزر / الإيميل</span>
+            <input
+              type="email"
+              value={loginForm.email}
+              onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
+              placeholder="employee@example.com"
+              autoComplete="username"
+            />
+          </label>
+
+          <label className="loginField">
+            <span>الباسورد</span>
+            <input
+              type="password"
+              value={loginForm.password}
+              onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+              placeholder="••••••••"
+              autoComplete="current-password"
+            />
+          </label>
+
+          {loginError && <div className="loginError">{loginError}</div>}
+
+          <button className="btn btnPrimary loginBtn" type="submit">
+            دخول
+          </button>
+        </form>
+      </main>
+    );
+  }
+
   return (
     <main className="app">
       <section className="hero">
@@ -392,6 +521,7 @@ function App() {
             استيراد Excel
             <input type="file" accept=".xlsx,.xls" onChange={importExcel} />
           </label>
+          <button className="btn btnDanger" onClick={logout}><LogOut size={18} /> خروج</button>
         </div>
       </section>
 
